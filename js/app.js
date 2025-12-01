@@ -8,8 +8,10 @@
 // ============================================
 
 const APP_CONFIG = {
-    weatherAPIKey: 'YOUR_OPENWEATHERMAP_API_KEY', // Replace with actual API key
-    weatherAPIUrl: 'https://api.openweathermap.org/data/2.5/weather',
+    // Singapore NEA API endpoints
+    weatherForecastUrl: 'https://api.data.gov.sg/v1/environment/4-day-weather-forecast',
+    weatherRealtimeUrl: 'https://api.data.gov.sg/v1/environment/2-hour-weather-forecast',
+    tempHumidityUrl: 'https://api.data.gov.sg/v1/environment/air-temperature',
     storageKey: 'shoresquad_data',
     animationDuration: 300
 };
@@ -131,128 +133,156 @@ async function getUserLocation() {
 }
 
 // ============================================
-// Weather API Functions
+// Weather API Functions - Singapore NEA
 // ============================================
 
 /**
- * Fetch weather data from OpenWeatherMap API
+ * Fetch 4-day weather forecast from NEA
  */
-async function fetchWeatherData(lat, lon) {
+async function fetchWeatherForecast() {
     try {
-        const url = `${APP_CONFIG.weatherAPIUrl}?lat=${lat}&lon=${lon}&units=metric&appid=${APP_CONFIG.weatherAPIKey}`;
-        const response = await fetch(url);
+        const response = await fetch(APP_CONFIG.weatherForecastUrl);
         
         if (!response.ok) {
-            throw new Error('Weather data unavailable');
+            throw new Error('Weather forecast unavailable');
         }
         
         const data = await response.json();
         appState.currentWeather = data;
-        saveToStorage('currentWeather', data);
+        saveToStorage('weatherForecast', data);
         return data;
     } catch (error) {
         console.error('Weather fetch error:', error);
-        // Return mock data if API fails
-        return getMockWeatherData();
+        return null;
     }
 }
 
 /**
- * Mock weather data for development
+ * Fetch real-time temperature and humidity
  */
-function getMockWeatherData() {
-    return {
-        name: 'Sample Beach',
-        main: {
-            temp: 24,
-            feels_like: 23,
-            humidity: 65
-        },
-        weather: [
-            {
-                main: 'Clear',
-                description: 'clear sky',
-                icon: '01d'
-            }
-        ],
-        wind: {
-            speed: 5.2
-        },
-        visibility: 10000
-    };
+async function fetchCurrentTemp() {
+    try {
+        const response = await fetch(APP_CONFIG.tempHumidityUrl);
+        
+        if (!response.ok) {
+            throw new Error('Temperature data unavailable');
+        }
+        
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Temperature fetch error:', error);
+        return null;
+    }
 }
 
 /**
- * Display weather data
+ * Get weather icon emoji based on forecast
  */
-function displayWeather(weatherData) {
+function getWeatherIcon(forecast) {
+    const forecastLower = forecast.toLowerCase();
+    
+    if (forecastLower.includes('thunder')) return '⛈️';
+    if (forecastLower.includes('rain') || forecastLower.includes('shower')) return '🌧️';
+    if (forecastLower.includes('cloudy')) return '☁️';
+    if (forecastLower.includes('partly cloudy')) return '⛅';
+    if (forecastLower.includes('fair') || forecastLower.includes('sunny')) return '☀️';
+    if (forecastLower.includes('hazy')) return '🌫️';
+    
+    return '🌤️';
+}
+
+/**
+ * Display 4-day weather forecast
+ */
+async function displayWeather() {
     const weatherWidget = document.getElementById('weatherWidget');
     
-    const weatherIcons = {
-        'Clear': '☀️',
-        'Clouds': '☁️',
-        'Rain': '🌧️',
-        'Drizzle': '🌦️',
-        'Thunderstorm': '⛈️',
-        'Snow': '❄️',
-        'Mist': '🌫️'
-    };
-    
-    const icon = weatherIcons[weatherData.weather[0].main] || '🌤️';
-    const temp = Math.round(weatherData.main.temp);
-    const feelsLike = Math.round(weatherData.main.feels_like);
-    
-    weatherWidget.innerHTML = `
-        <div class="weather-content">
-            <div class="weather-main">
-                <span class="weather-icon">${icon}</span>
-                <div>
-                    <div class="weather-temp">${temp}°C</div>
-                    <div style="color: var(--gray-700);">Feels like ${feelsLike}°C</div>
+    try {
+        // Fetch forecast and temperature data
+        const [forecastData, tempData] = await Promise.all([
+            fetchWeatherForecast(),
+            fetchCurrentTemp()
+        ]);
+        
+        if (!forecastData || !forecastData.items || forecastData.items.length === 0) {
+            throw new Error('No forecast data available');
+        }
+        
+        const forecasts = forecastData.items[0].forecasts;
+        const currentTemp = tempData && tempData.items && tempData.items[0].readings.length > 0 
+            ? tempData.items[0].readings[0].value 
+            : null;
+        
+        // Get general forecast for today
+        const generalForecast = forecastData.items[0].general || {};
+        
+        // Build forecast cards HTML
+        const forecastCards = forecasts.map((day, index) => {
+            const date = new Date(day.date);
+            const dayName = index === 0 ? 'Today' : date.toLocaleDateString('en-SG', { weekday: 'short' });
+            const dateStr = date.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' });
+            const icon = getWeatherIcon(day.forecast);
+            
+            return `
+                <div class="forecast-card">
+                    <div class="forecast-day">${dayName}</div>
+                    <div class="forecast-date">${dateStr}</div>
+                    <div class="forecast-icon">${icon}</div>
+                    <div class="forecast-temps">
+                        <span class="temp-high">${day.temperature.high}°</span>
+                        <span class="temp-low">${day.temperature.low}°</span>
+                    </div>
+                    <div class="forecast-desc">${day.forecast}</div>
+                    <div class="forecast-humidity">💧 ${day.relative_humidity.high}%</div>
                 </div>
+            `;
+        }).join('');
+        
+        weatherWidget.innerHTML = `
+            <div class="weather-header">
+                <h3>🌊 Singapore Weather Forecast</h3>
+                ${currentTemp ? `<div class="current-temp">Current: ${Math.round(currentTemp)}°C</div>` : ''}
             </div>
-            <div class="weather-details">
-                <div class="weather-detail">
-                    <span>📍</span>
-                    <span>${weatherData.name}</span>
-                </div>
-                <div class="weather-detail">
-                    <span>💨</span>
-                    <span>Wind: ${weatherData.wind.speed} m/s</span>
-                </div>
-                <div class="weather-detail">
-                    <span>💧</span>
-                    <span>Humidity: ${weatherData.main.humidity}%</span>
-                </div>
-                <div class="weather-detail">
-                    <span>👁️</span>
-                    <span>Visibility: ${(weatherData.visibility / 1000).toFixed(1)} km</span>
-                </div>
+            <div class="forecast-grid">
+                ${forecastCards}
             </div>
-        </div>
-        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--gray-200);">
-            <p style="color: var(--success); font-weight: 600;">
-                ${getWeatherRecommendation(weatherData)}
-            </p>
-        </div>
-    `;
+            <div class="weather-footer">
+                <p style="color: var(--success); font-weight: 600;">
+                    ${getCleanupRecommendation(forecasts[0])}
+                </p>
+                ${generalForecast.forecast ? `<p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--gray-700);">${generalForecast.forecast}</p>` : ''}
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Error displaying weather:', error);
+        weatherWidget.innerHTML = `
+            <div style="text-align: center; padding: 2rem;">
+                <p style="color: var(--gray-700); margin-bottom: 1rem;">Unable to load weather forecast</p>
+                <button class="btn btn-primary" onclick="displayWeather()">Retry</button>
+            </div>
+        `;
+    }
 }
 
 /**
- * Get weather-based recommendation
+ * Get cleanup recommendation based on forecast
  */
-function getWeatherRecommendation(weatherData) {
-    const condition = weatherData.weather[0].main;
-    const temp = weatherData.main.temp;
+function getCleanupRecommendation(todayForecast) {
+    const forecastLower = todayForecast.forecast.toLowerCase();
+    const highTemp = todayForecast.temperature.high;
     
-    if (condition === 'Rain' || condition === 'Thunderstorm') {
-        return '🌧️ Not ideal for cleanup today. Check back tomorrow!';
-    } else if (temp > 30) {
-        return '🌡️ Hot day! Remember sunscreen and hydration.';
-    } else if (temp < 15) {
-        return '🧥 Bit chilly! Bring a jacket for the cleanup.';
+    if (forecastLower.includes('thunder') || forecastLower.includes('heavy rain')) {
+        return '⚠️ Not ideal for cleanup today. Stay safe and check back tomorrow!';
+    } else if (forecastLower.includes('shower') || forecastLower.includes('rain')) {
+        return '🌧️ Possible rain expected. Bring waterproof gear!';
+    } else if (highTemp > 32) {
+        return '🌡️ Hot day ahead! Remember sunscreen, hat, and plenty of water.';
+    } else if (forecastLower.includes('fair') || forecastLower.includes('sunny')) {
+        return '✨ Perfect weather for a beach cleanup! Let\'s go! 🏖️';
     } else {
-        return '✨ Perfect weather for a beach cleanup!';
+        return '👍 Good conditions for cleanup. See you at the beach!';
     }
 }
 
@@ -463,10 +493,6 @@ async function handleFindCleanups() {
         const location = await getUserLocation();
         showToast('✅ Location acquired! Loading cleanups...');
         
-        // Fetch weather for the location
-        const weather = await fetchWeatherData(location.lat, location.lon);
-        displayWeather(weather);
-        
         // Scroll to map section
         document.getElementById('map').scrollIntoView({ behavior: 'smooth' });
     } catch (error) {
@@ -532,12 +558,9 @@ async function initApp() {
     
     // Load saved data from localStorage
     const savedLocation = loadFromStorage('userLocation');
-    const savedWeather = loadFromStorage('currentWeather');
     
-    // Display saved weather or fetch new data
-    if (savedWeather) {
-        displayWeather(savedWeather);
-    }
+    // Fetch and display weather forecast
+    displayWeather();
     
     // Load and display mock events
     const events = getMockEvents();
